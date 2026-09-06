@@ -1,4 +1,5 @@
-# main.py 主逻辑：包括字段拼接、模拟请求
+# main.py 主逻辑：包括字段拼接、模拟请求（支持多账号顺序执行，每账号独立推送）
+import copy
 import json
 import time
 import random
@@ -8,7 +9,7 @@ import requests
 import urllib.parse
 from push import push
 from log_utils import setup_logging
-from config import data, headers, cookies, READ_NUM, PUSH_METHOD, book, chapter
+from config import data, headers, cookies, READ_NUM, PUSH_METHOD, book, chapter, get_accounts
 
 
 # 加密盐及其它默认值
@@ -38,12 +39,12 @@ def cal_hash(input_string):
 
     return hex(_7032f5 + _cc1055)[2:].lower()
 
-def get_wr_skey():
+def get_wr_skey(headers, cookies):
     """刷新cookie密钥"""
     for cookie_data in COOKIE_DATA_VARIANTS:
         try:
             response = requests.post(RENEW_URL,headers=headers,cookies=cookies,data=json.dumps(cookie_data, separators=(',', ':')),timeout=10)
-            
+
             if 'wr_skey' in response.cookies:
                 return response.cookies['wr_skey'][:8]
             else:
@@ -51,68 +52,102 @@ def get_wr_skey():
         except requests.RequestException as exc:
             logging.warning(f"refresh_cookie 请求失败，payload={cookie_data}，原因：{exc}")
             continue
-        
-        
+
+
     return None
 
-def fix_no_synckey():
+def fix_no_synckey(headers, cookies):
     requests.post(FIX_SYNCKEY_URL, headers=headers, cookies=cookies,data=json.dumps({"bookIds":["3300060341"]}, separators=(',', ':')))
 
 refresh_print = setup_logging()
 
-def refresh_cookie():
-    logging.info("刷新 cookie")
-    new_skey = get_wr_skey()
+def refresh_cookie(headers, cookies, label=""):
+    prefix = f"{label} " if label else ""
+    logging.info(f"{prefix}刷新 cookie")
+    new_skey = get_wr_skey(headers, cookies)
     if new_skey:
         cookies['wr_skey'] = new_skey
-        logging.info(f"密钥刷新成功，新密钥：{new_skey[:2]}***")
-        logging.info("重新本次阅读。")
+        logging.info(f"{prefix}密钥刷新成功，新密钥：{new_skey[:2]}***")
+        logging.info(f"{prefix}重新本次阅读。")
     else:
-        ERROR_CODE = "无法获取新密钥或者 WXREAD_CURL_BASH 配置有误，终止运行。"
+        ERROR_CODE = f"{prefix}无法获取新密钥或者 WXREAD_CURL_BASH 配置有误，终止运行。"
         logging.error(ERROR_CODE)
-        push(ERROR_CODE, PUSH_METHOD, is_success=False)
         raise Exception(ERROR_CODE)
 
-refresh_cookie()
-index = 1
-lastTime = int(time.time()) - 30
-logging.info(f"一共需要阅读 {READ_NUM} 次。")
 
-while index <= READ_NUM:
-    data.pop('s')
-    data['b'] = random.choice(book)
-    data['c'] = random.choice(chapter)
-    thisTime = int(time.time())
-    data['ct'] = thisTime
-    data['rt'] = thisTime - lastTime
-    data['ts'] = int(thisTime * 1000) + random.randint(0, 1000)
-    data['rn'] = random.randint(0, 1000)
-    data['sg'] = hashlib.sha256(f"{data['ts']}{data['rn']}{KEY}".encode()).hexdigest()
-    data['s'] = cal_hash(encode_data(data))
+def format_label(index, total):
+    return f"账号{index}/{total}" if total > 1 else ""
 
-    refresh_print(f"阅读进度: 第 {index}/{READ_NUM} 次，已完成 {(index - 1) * 0.5:.1f} 分钟")
-    logging.debug("data: %s", data)
-    response = requests.post(READ_URL, headers=headers, cookies=cookies, data=json.dumps(data, separators=(',', ':')))
-    resData = response.json()
-    logging.debug("response: %s", resData)
 
-    if 'succ' in resData:
-        if 'synckey' in resData:
-            lastTime = thisTime
-            index += 1
-            time.sleep(30)
-            refresh_print(f"阅读进度: 第 {min(index, READ_NUM + 1) - 1}/{READ_NUM} 次，已完成 {(index - 1) * 0.5:.1f} 分钟")
+def run_account(headers, cookies, index=1, total=1):
+    """运行单个账号的阅读循环，返回阅读分钟数。"""
+    label = format_label(index, total)
+    prefix = f"{label} " if label else ""
+    account_data = copy.deepcopy(data)
+
+    refresh_cookie(headers, cookies, label)
+    read_index = 1
+    lastTime = int(time.time()) - 30
+    logging.info(f"{prefix}一共需要阅读 {READ_NUM} 次。")
+
+    while read_index <= READ_NUM:
+        account_data.pop('s')
+        account_data['b'] = random.choice(book)
+        account_data['c'] = random.choice(chapter)
+        thisTime = int(time.time())
+        account_data['ct'] = thisTime
+        account_data['rt'] = thisTime - lastTime
+        account_data['ts'] = int(thisTime * 1000) + random.randint(0, 1000)
+        account_data['rn'] = random.randint(0, 1000)
+        account_data['sg'] = hashlib.sha256(f"{account_data['ts']}{account_data['rn']}{KEY}".encode()).hexdigest()
+        account_data['s'] = cal_hash(encode_data(account_data))
+
+        refresh_print(f"{prefix}阅读进度: 第 {read_index}/{READ_NUM} 次，已完成 {(read_index - 1) * 0.5:.1f} 分钟")
+        logging.debug("data: %s", account_data)
+        response = requests.post(READ_URL, headers=headers, cookies=cookies, data=json.dumps(account_data, separators=(',', ':')))
+        resData = response.json()
+        logging.debug("response: %s", resData)
+
+        if 'succ' in resData:
+            if 'synckey' in resData:
+                lastTime = thisTime
+                read_index += 1
+                time.sleep(30)
+                refresh_print(f"{prefix}阅读进度: 第 {min(read_index, READ_NUM + 1) - 1}/{READ_NUM} 次，已完成 {(read_index - 1) * 0.5:.1f} 分钟")
+            else:
+                logging.warning(f"{prefix}无 synckey，尝试修复...")
+                fix_no_synckey(headers, cookies)
         else:
-            logging.warning("无 synckey，尝试修复...")
-            fix_no_synckey()
-    else:
-        logging.warning("cookie 已过期，尝试刷新...")
-        refresh_cookie()
+            logging.warning(f"{prefix}cookie 已过期，尝试刷新...")
+            refresh_cookie(headers, cookies, label)
 
-logging.info("阅读脚本已完成。")
+    logging.info(f"{prefix}阅读脚本已完成。")
+    return (read_index - 1) * 0.5
 
-if PUSH_METHOD not in (None, ''):
-    logging.info("开始推送...")
-    push(f"微信读书自动阅读完成。\n阅读时长：{(index - 1) * 0.5} 分钟。", PUSH_METHOD, is_success=True)
-else:
-    logging.info("未配置推送渠道，跳过推送。")
+
+def main():
+    accounts = get_accounts()
+    total = len(accounts)
+    logging.info(f"共检测到 {total} 个账号，顺序执行。")
+
+    for i, (account_headers, account_cookies) in enumerate(accounts, start=1):
+        label = format_label(i, total)
+        prefix = f"{label} " if label else ""
+        try:
+            minutes = run_account(account_headers, account_cookies, i, total)
+        except Exception as exc:
+            logging.error(f"{prefix}运行失败：{exc}")
+            if PUSH_METHOD not in (None, ''):
+                logging.info(f"{prefix}开始推送失败通知...")
+                push(f"{prefix}微信读书自动阅读失败。\n原因：{exc}", PUSH_METHOD, is_success=False)
+            continue
+
+        if PUSH_METHOD not in (None, ''):
+            logging.info(f"{prefix}开始推送...")
+            push(f"{prefix}微信读书自动阅读完成。\n阅读时长：{minutes} 分钟。", PUSH_METHOD, is_success=True)
+        else:
+            logging.info(f"{prefix}未配置推送渠道，跳过推送。")
+
+
+if __name__ == "__main__":
+    main()

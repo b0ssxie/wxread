@@ -115,4 +115,43 @@ def convert(curl_command):
     return headers, cookies
 
 
-headers, cookies = convert(curl_str) if curl_str else (headers, cookies)
+def split_curl_commands(curl_str):
+    """将 WXREAD_CURL_BASH 切分为多个 curl 命令（每个对应一个账号）。
+
+    支持：
+    - 显式分隔符 `|||` 或 `&&&`
+    - 换行分隔的多条 `curl ...` 命令
+    - 单行内用 `&&` / `;` 连接的多条 `curl ...` 命令
+    """
+    if not curl_str or not curl_str.strip():
+        return []
+    s = curl_str.strip().replace('\r\n', '\n').replace('\r', '\n')
+
+    for delim in ('|||', '&&&'):
+        if delim in s:
+            return [p.strip() for p in s.split(delim) if p.strip()]
+
+    parts = re.split(r"(?=^[ \t]*curl[\s'\"])", s, flags=re.MULTILINE | re.IGNORECASE)
+    parts = [p.strip() for p in parts if p.strip()]
+
+    if len(parts) == 1:
+        multi = re.split(r"\s*(?:&&|;)\s*(?=curl[\s'\"])", parts[0], flags=re.IGNORECASE)
+        multi = [p.strip() for p in multi if p.strip()]
+        if len(multi) > 1:
+            return multi
+
+    return parts
+
+
+def get_accounts():
+    """返回 [(headers, cookies), ...]，单账号时长度为 1。"""
+    if not curl_str:
+        return [(headers, cookies)]
+    cmds = split_curl_commands(curl_str)
+    if not cmds:
+        return [(headers, cookies)]
+    return [convert(cmd) for cmd in cmds]
+
+
+_curl_cmds = split_curl_commands(curl_str) if curl_str else []
+headers, cookies = convert(_curl_cmds[0]) if _curl_cmds else (headers, cookies)
