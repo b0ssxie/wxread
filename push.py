@@ -38,6 +38,9 @@ class PushNotification:
                 response = requests.post(
                     self.pushplus_url,
                     data=json.dumps({"token": token, "title": title,"content": content,}).encode("utf-8"),headers=self.headers,timeout=10,)
+                if 400 <= response.status_code < 500:
+                    logger.error("PushPlus 鉴权/客户端错误 (%d)，停止重试。响应: %s", response.status_code, response.text[:200])
+                    return False
                 response.raise_for_status()
                 logger.info("PushPlus 响应: %s", response.text)
                 return True
@@ -75,6 +78,9 @@ class PushNotification:
         for attempt in range(attempts):
             try:
                 response = requests.get(url, timeout=10)
+                if 400 <= response.status_code < 500:
+                    logger.error("WxPusher 鉴权/客户端错误 (%d)，停止重试。响应: %s", response.status_code, response.text[:200])
+                    return False
                 response.raise_for_status()
                 logger.info("WxPusher 响应: %s", response.text)
                 return True
@@ -100,6 +106,9 @@ class PushNotification:
                     headers=self.headers,
                     timeout=10,
                 )
+                if 400 <= response.status_code < 500:
+                    logger.error("ServerChan 鉴权/客户端错误 (%d)，停止重试。响应: %s", response.status_code, response.text[:200])
+                    return False
                 response.raise_for_status()
                 logger.info("ServerChan 响应: %s", response.text)
                 return True
