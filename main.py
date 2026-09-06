@@ -7,6 +7,7 @@ import logging
 import hashlib
 import requests
 import urllib.parse
+from datetime import datetime
 from push import push
 from log_utils import setup_logging
 from config import data, headers, cookies, READ_NUM, PUSH_METHOD, book, chapter, get_accounts
@@ -79,6 +80,27 @@ def format_label(index, total):
     return f"账号{index}/{total}" if total > 1 else ""
 
 
+def build_success_report(label, minutes):
+    """组装阅读成功推送正文，各推送渠道共用。"""
+    lines = ["微信读书自动阅读完成"]
+    if label:
+        lines.append(f"账号：{label}")
+    lines.append(f"完成时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"阅读次数：{READ_NUM} 次")
+    lines.append(f"阅读时长：{minutes} 分钟")
+    return "\n".join(lines)
+
+
+def build_failure_report(label, error):
+    """组装阅读失败推送正文，各推送渠道共用。"""
+    lines = ["微信读书自动阅读失败"]
+    if label:
+        lines.append(f"账号：{label}")
+    lines.append(f"失败时间：{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    lines.append(f"原因：{error}")
+    return "\n".join(lines)
+
+
 def run_account(headers, cookies, index=1, total=1):
     """运行单个账号的阅读循环，返回阅读分钟数。"""
     label = format_label(index, total)
@@ -139,12 +161,12 @@ def main():
             logging.error(f"{prefix}运行失败：{exc}")
             if PUSH_METHOD not in (None, ''):
                 logging.info(f"{prefix}开始推送失败通知...")
-                push(f"{prefix}微信读书自动阅读失败。\n原因：{exc}", PUSH_METHOD, is_success=False)
+                push(build_failure_report(label, exc), PUSH_METHOD, is_success=False)
             continue
 
         if PUSH_METHOD not in (None, ''):
             logging.info(f"{prefix}开始推送...")
-            push(f"{prefix}微信读书自动阅读完成。\n阅读时长：{minutes} 分钟。", PUSH_METHOD, is_success=True)
+            push(build_success_report(label, minutes), PUSH_METHOD, is_success=True)
         else:
             logging.info(f"{prefix}未配置推送渠道，跳过推送。")
 

@@ -25,6 +25,11 @@ No tests, lint, typecheck, or formatter configured.
 
 Key env vars: `WXREAD_CURL_BASH`, `READ_NUM`, `PUSH_METHOD`, and the corresponding token vars for each push provider.
 
+## Multi-account
+
+- `WXREAD_CURL_BASH` may hold multiple curl commands (one per account), separated by `|||`, `&&&`, newlines, or `&&`/`;`. `config.py:split_curl_commands()` splits them, `get_accounts()` returns `[(headers, cookies), ...]`.
+- `main.py:main()` runs accounts sequentially via `run_account()` (deep-copied `data` per account) and pushes a structured per-account report (`build_success_report` / `build_failure_report` with account label, timestamp, count, minutes). One account failing does not stop the rest.
+
 ## Important constraints
 
 - **Do not modify the `data` dict in `config.py`** (book `b`, chapter `c`, `appId`, etc.). It's tuned for "三体" and other books may not register reading time correctly.

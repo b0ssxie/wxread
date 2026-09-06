@@ -3,6 +3,7 @@ import logging
 import os
 import random
 import time
+import urllib.parse
 
 import requests
 
@@ -69,7 +70,7 @@ class PushNotification:
 
     def push_wxpusher(self, content, spt):
         attempts = 5
-        url = self.wxpusher_simple_url.format(spt, content)
+        url = self.wxpusher_simple_url.format(spt, urllib.parse.quote(content, safe=''))
 
         for attempt in range(attempts):
             try:
